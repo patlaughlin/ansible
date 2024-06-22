@@ -17,7 +17,6 @@
 
 - name: Oh-My-Zsh
   shell: sh -c "$(wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -O -)"
-  when: oh_my_stats.stat.exists == False
   become: true
 
 - name: Install zsh-autosuggestions
