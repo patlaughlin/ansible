@@ -11,4 +11,5 @@
       - core
   tasks:
     - include_tasks: tasks/core-setup.yml
+    - include_tasks: tasks/zsh-setup.yml
     - include_tasks: tasks/git-setup.yml
