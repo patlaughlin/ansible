@@ -9,6 +9,8 @@
     - zsh
     - zsh-completions
     - firefox
+    - alacritty
+    - dmenu
   tags:
     - install
     - core
