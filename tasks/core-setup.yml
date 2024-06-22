@@ -1,0 +1,14 @@
+- name: Install base packages
+  pacman:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - base-devel
+    - git
+    - vim
+    - zsh
+    - zsh-completions
+    - firefox
+  tags:
+    - install
+    - core
