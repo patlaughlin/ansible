@@ -5,7 +5,7 @@
   with_items:
     - base-devel
     - git
-    - vim
+    - neovim
     - zsh
     - zsh-completions
     - firefox
@@ -14,3 +14,14 @@
   tags:
     - install
     - core
+
+- name: Oh-My-Zsh
+  shell: sh -c "$(wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -O -)"
+  when: oh_my_stats.stat.exists == False
+  become: true
+
+- name: Install zsh-autosuggestions
+  ansible.builtin.git:
+    repo: 'https://github.com/zsh-users/zsh-autosuggestions.git'
+    dest: "~/.oh-my-zsh/plugins/zsh-autosuggestions"
+  tags: *tags_for_zsh_tasks
