@@ -1,4 +1,24 @@
 ---
+# Ubuntu System Setup Playbook
+#
+# Prerequisites:
+# 1. Ansible installed on the local machine
+#    To install: sudo apt update && sudo apt install ansible
+#
+# 2. community.general collection for Ansible
+#    To install: ansible-galaxy collection install community.general
+#
+# 3. Sudo privileges for the user running the playbook
+#
+# 4. Replace the 'username' variable with your actual username
+#
+# To run this playbook:
+# ansible-playbook ubuntu_setup.yml --ask-become-pass
+#
+# Note: This playbook will make significant changes to your system.
+# It's recommended to review the tasks and variables before running.
+#
+#
 - name: Setup Ubuntu system and deploy dotfiles
   hosts: localhost
   become: yes
@@ -26,6 +46,7 @@
     - name: Update apt cache
       apt:
         update_cache: yes
+        cache_valid_time: 3600  # Only update if cache is older than 1 hour
 
     - name: Install required packages
       apt:
@@ -58,14 +79,19 @@
         name: neovim
         state: latest
 
+    - name: Check if lazygit is installed
+      command: which lazygit
+      register: lazygit_check
+      ignore_errors: yes
+      changed_when: false
+
     - name: Install lazygit
       shell: |
         LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
         curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
         tar xf lazygit.tar.gz lazygit
         sudo install lazygit /usr/local/bin
-      args:
-        creates: /usr/local/bin/lazygit
+      when: lazygit_check.rc != 0
 
     - name: Set Zsh as default shell
       user:
@@ -80,10 +106,16 @@
         - "/root/dotfiles"
         - "/home/root/dotfiles"
 
+    - name: Check if dotfiles directory exists
+      stat:
+        path: "{{ dotfiles_local_path }}"
+      register: dotfiles_dir
+
     - name: Remove existing dotfiles directory if it exists
       file:
         path: "{{ dotfiles_local_path }}"
         state: absent
+      when: dotfiles_dir.stat.exists
       become: yes
       become_user: "{{ username }}"
 
@@ -92,13 +124,18 @@
         repo: "{{ dotfiles_repo }}"
         dest: "{{ dotfiles_local_path }}"
         version: main
+        update: no  # Don't update if already cloned
       become: yes
       become_user: "{{ username }}"
 
+    - name: Check if Oh My Zsh is installed
+      stat:
+        path: "{{ user_home }}/.oh-my-zsh"
+      register: oh_my_zsh
+
     - name: Install Oh My Zsh
       shell: sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-      args:
-        creates: "{{ user_home }}/.oh-my-zsh"
+      when: not oh_my_zsh.stat.exists
       become: yes
       become_user: "{{ username }}"
 
@@ -106,14 +143,19 @@
       git:
         repo: https://github.com/zsh-users/zsh-autosuggestions
         dest: "{{ user_home }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        update: no  # Don't update if already cloned
       become: yes
       become_user: "{{ username }}"
+
+    - name: Check if Homebrew is installed
+      stat:
+        path: "/home/linuxbrew/.linuxbrew/bin/brew"
+      register: homebrew_check
 
     - name: Install Homebrew
       shell: |
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      args:
-        creates: "/home/linuxbrew/.linuxbrew/bin/brew"
+      when: not homebrew_check.stat.exists
       become: yes
       become_user: "{{ username }}"
 
@@ -125,59 +167,57 @@
       become: yes
       become_user: "{{ username }}"
 
-    - name: Create temporary directory for font download
-      file:
-        path: "{{ user_home }}/temp_font"
-        state: directory
-      become: yes
-      become_user: "{{ username }}"
+    - name: Check if Caskaydia Cove Nerd Font is installed
+      find:
+        paths: "{{ user_home }}/.fonts"
+        patterns: "CaskaydiaCove*.ttf"
+      register: font_check
 
-    - name: Download Caskaydia Cove Nerd Font
-      get_url:
-        url: "{{ font_url }}"
-        dest: "{{ user_home }}/temp_font/{{ font_filename }}"
-      become: yes
-      become_user: "{{ username }}"
+    - name: Download and install Caskaydia Cove Nerd Font
+      block:
+        - name: Create temporary directory for font download
+          file:
+            path: "{{ user_home }}/temp_font"
+            state: directory
 
-    - name: Unzip Caskaydia Cove Nerd Font
-      unarchive:
-        src: "{{ user_home }}/temp_font/{{ font_filename }}"
-        dest: "{{ user_home }}/temp_font/"
-        remote_src: yes
-      become: yes
-      become_user: "{{ username }}"
+        - name: Download Caskaydia Cove Nerd Font
+          get_url:
+            url: "{{ font_url }}"
+            dest: "{{ user_home }}/temp_font/{{ font_filename }}"
 
-    - name: Create .fonts directory
-      file:
-        path: "{{ user_home }}/.fonts"
-        state: directory
-      become: yes
-      become_user: "{{ username }}"
+        - name: Unzip Caskaydia Cove Nerd Font
+          unarchive:
+            src: "{{ user_home }}/temp_font/{{ font_filename }}"
+            dest: "{{ user_home }}/temp_font/"
+            remote_src: yes
 
-    - name: Move font files to .fonts directory
-      shell: mv {{ user_home }}/temp_font/*.ttf {{ user_home }}/.fonts/
-      become: yes
-      become_user: "{{ username }}"
+        - name: Create .fonts directory
+          file:
+            path: "{{ user_home }}/.fonts"
+            state: directory
 
-    - name: Update font cache
-      shell: fc-cache -fv
-      become: yes
-      become_user: "{{ username }}"
+        - name: Move font files to .fonts directory
+          shell: mv {{ user_home }}/temp_font/*.ttf {{ user_home }}/.fonts/
 
-    - name: Clean up temporary font directory
-      file:
-        path: "{{ user_home }}/temp_font"
-        state: absent
+        - name: Update font cache
+          command: fc-cache -fv
+
+        - name: Clean up temporary font directory
+          file:
+            path: "{{ user_home }}/temp_font"
+            state: absent
+      when: font_check.matched == 0
       become: yes
       become_user: "{{ username }}"
 
     - name: Backup existing .zshrc
-      command: mv {{ user_home }}/.zshrc {{ user_home }}/.zshrc.backup
-      args:
-        creates: "{{ user_home }}/.zshrc.backup"
+      copy:
+        src: "{{ user_home }}/.zshrc"
+        dest: "{{ user_home }}/.zshrc.backup"
+        remote_src: yes
       become: yes
       become_user: "{{ username }}"
-      ignore_errors: yes
+      when: ansible_check_mode
 
     - name: Remove existing .zshrc
       file:
@@ -185,6 +225,7 @@
         state: absent
       become: yes
       become_user: "{{ username }}"
+      when: ansible_check_mode
 
     - name: Stow dotfiles
       command: stow {{ item }}
@@ -202,25 +243,27 @@
       become: yes
       become_user: "{{ username }}"
 
-    - name: Download LunarVim installation script
-      get_url:
-        url: https://raw.githubusercontent.com/LunarVim/LunarVim/release-1.4/neovim-0.9/utils/installer/install.sh
-        dest: "{{ user_home }}/lvim_install.sh"
-        mode: '0755'
-      become: yes
-      become_user: "{{ username }}"
+    - name: Check if LunarVim is installed
+      stat:
+        path: "{{ user_home }}/.local/bin/lvim"
+      register: lunarvim_check
 
     - name: Install LunarVim
-      shell: LV_BRANCH='release-1.4/neovim-0.9' bash {{ user_home }}/lvim_install.sh
-      args:
-        creates: "{{ user_home }}/.local/bin/lvim"
-      become: yes
-      become_user: "{{ username }}"
+      block:
+        - name: Download LunarVim installation script
+          get_url:
+            url: https://raw.githubusercontent.com/LunarVim/LunarVim/release-1.4/neovim-0.9/utils/installer/install.sh
+            dest: "{{ user_home }}/lvim_install.sh"
+            mode: '0755'
 
-    - name: Remove LunarVim installation script
-      file:
-        path: "{{ user_home }}/lvim_install.sh"
-        state: absent
+        - name: Run LunarVim installation script
+          shell: LV_BRANCH='release-1.4/neovim-0.9' bash {{ user_home }}/lvim_install.sh
+
+        - name: Remove LunarVim installation script
+          file:
+            path: "{{ user_home }}/lvim_install.sh"
+            state: absent
+      when: not lunarvim_check.stat.exists
       become: yes
       become_user: "{{ username }}"
 
@@ -251,42 +294,40 @@
       become: yes
       become_user: "{{ username }}"
 
-    - name: Download Flutter SDK
-      get_url:
-        url: "{{ flutter_url }}"
-        dest: "/tmp/flutter.tar.xz"
-      become: yes
-      become_user: "{{ username }}"
-
-    - name: Create Flutter directory
-      file:
+    - name: Check if Flutter is installed
+      stat:
         path: "{{ user_home }}/flutter"
-        state: directory
-      become: yes
-      become_user: "{{ username }}"
+      register: flutter_check
 
-    - name: Extract Flutter SDK
-      unarchive:
-        src: "/tmp/flutter.tar.xz"
-        dest: "{{ user_home }}"
-        remote_src: yes
-      become: yes
-      become_user: "{{ username }}"
+    - name: Install Flutter
+      block:
+        - name: Download Flutter SDK
+          get_url:
+            url: "{{ flutter_url }}"
+            dest: "/tmp/flutter.tar.xz"
 
-    - name: Add Flutter to PATH
-      lineinfile:
-        path: "{{ user_home }}/.zshrc"
-        line: 'export PATH="$PATH:{{ user_home }}/flutter/bin"'
-      become: yes
-      become_user: "{{ username }}"
+        - name: Create Flutter directory
+          file:
+            path: "{{ user_home }}/flutter"
+            state: directory
 
-    - name: Run Flutter doctor
-      command: "{{ user_home }}/flutter/bin/flutter doctor"
-      become: yes
-      become_user: "{{ username }}"
+        - name: Extract Flutter SDK
+          unarchive:
+            src: "/tmp/flutter.tar.xz"
+            dest: "{{ user_home }}"
+            remote_src: yes
 
-    - name: Accept Android licenses
-      shell: yes | {{ user_home }}/flutter/bin/flutter doctor --android-licenses
+        - name: Add Flutter to PATH
+          lineinfile:
+            path: "{{ user_home }}/.zshrc"
+            line: 'export PATH="$PATH:{{ user_home }}/flutter/bin"'
+
+        - name: Run Flutter doctor
+          command: "{{ user_home }}/flutter/bin/flutter doctor"
+
+        - name: Accept Android licenses
+          shell: yes | {{ user_home }}/flutter/bin/flutter doctor --android-licenses
+      when: not flutter_check.stat.exists
       become: yes
       become_user: "{{ username }}"
 
