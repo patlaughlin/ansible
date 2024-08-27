@@ -42,12 +42,28 @@
           - build-essential
           - procps
           - file
+          - make
+          - python3-pip
+          - python3
+          - npm
+          - nodejs
+          - cargo
+          - ripgrep
         state: present
 
-    - name: Install Neovim via Snap
-      community.general.snap:
-        name: nvim
-        classic: yes
+    - name: Install latest Neovim
+      apt:
+        name: neovim
+        state: latest
+
+    - name: Install lazygit
+      shell: |
+        LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
+        curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
+        tar xf lazygit.tar.gz lazygit
+        sudo install lazygit /usr/local/bin
+      args:
+        creates: /usr/local/bin/lazygit
 
     - name: Set Zsh as default shell
       user:
@@ -181,6 +197,35 @@
         path: "{{ user_home }}/.zshrc"
         line: 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
         create: yes
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Download LunarVim installation script
+      get_url:
+        url: https://raw.githubusercontent.com/LunarVim/LunarVim/release-1.4/neovim-0.9/utils/installer/install.sh
+        dest: "{{ user_home }}/lvim_install.sh"
+        mode: '0755'
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Install LunarVim
+      shell: LV_BRANCH='release-1.4/neovim-0.9' bash {{ user_home }}/lvim_install.sh
+      args:
+        creates: "{{ user_home }}/.local/bin/lvim"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Remove LunarVim installation script
+      file:
+        path: "{{ user_home }}/lvim_install.sh"
+        state: absent
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Add LunarVim to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export PATH="$HOME/.local/bin:$PATH"'
       become: yes
       become_user: "{{ username }}"
 
