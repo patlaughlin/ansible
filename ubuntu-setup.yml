@@ -9,6 +9,8 @@
     dotfiles_local_path: "{{ user_home }}/dotfiles"
     font_url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.2/CascadiaCode.zip"
     font_filename: "CascadiaCode.zip"
+    flutter_version: "3.13.0"
+    flutter_url: "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_{{ flutter_version }}-stable.tar.xz"
     stow_folders:
       - i3
       - kitty
@@ -226,6 +228,65 @@
       lineinfile:
         path: "{{ user_home }}/.zshrc"
         line: 'export PATH="$HOME/.local/bin:$PATH"'
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Install Android Studio via Snap
+      community.general.snap:
+        name: android-studio
+        classic: yes
+      become: yes
+
+    - name: Set ANDROID_HOME environment variable
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export ANDROID_HOME="{{ user_home }}/Android/Sdk"'
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Add Android SDK tools to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export PATH="$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/tools/bin:$ANDROID_HOME/platform-tools"'
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Download Flutter SDK
+      get_url:
+        url: "{{ flutter_url }}"
+        dest: "/tmp/flutter.tar.xz"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Create Flutter directory
+      file:
+        path: "{{ user_home }}/flutter"
+        state: directory
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Extract Flutter SDK
+      unarchive:
+        src: "/tmp/flutter.tar.xz"
+        dest: "{{ user_home }}"
+        remote_src: yes
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Add Flutter to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export PATH="$PATH:{{ user_home }}/flutter/bin"'
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Run Flutter doctor
+      command: "{{ user_home }}/flutter/bin/flutter doctor"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Accept Android licenses
+      shell: yes | {{ user_home }}/flutter/bin/flutter doctor --android-licenses
       become: yes
       become_user: "{{ username }}"
 
