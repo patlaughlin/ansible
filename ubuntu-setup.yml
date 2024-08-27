@@ -27,9 +27,9 @@
     username: "plaugh"  # Replace with your actual username if different
     user_home: "/home/{{ username }}"
     dotfiles_local_path: "{{ user_home }}/dotfiles"
-    font_url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.2/CascadiaCode.zip"
+    font_url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/CascadiaCode.zip"
     font_filename: "CascadiaCode.zip"
-    flutter_version: "3.13.0"
+    flutter_version: "3.24.0"
     flutter_url: "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_{{ flutter_version }}-stable.tar.xz"
     stow_folders:
       - i3
@@ -294,40 +294,53 @@
       become: yes
       become_user: "{{ username }}"
 
-    - name: Check if Flutter is installed
-      stat:
-        path: "{{ user_home }}/flutter"
-      register: flutter_check
+    - name: Check if FVM is installed
+      command: which fvm
+      register: fvm_check
+      ignore_errors: yes
+      changed_when: false
 
-    - name: Install Flutter
+    - name: Install FVM
       block:
-        - name: Download Flutter SDK
-          get_url:
-            url: "{{ flutter_url }}"
-            dest: "/tmp/flutter.tar.xz"
+        - name: Add FVM Homebrew tap
+          homebrew_tap:
+            name: leoafarias/fvm
+          become: yes
+          become_user: "{{ username }}"
 
-        - name: Create Flutter directory
-          file:
-            path: "{{ user_home }}/flutter"
-            state: directory
+        - name: Install FVM via Homebrew
+          homebrew:
+            name: fvm
+            state: present
+          become: yes
+          become_user: "{{ username }}"
 
-        - name: Extract Flutter SDK
-          unarchive:
-            src: "/tmp/flutter.tar.xz"
-            dest: "{{ user_home }}"
-            remote_src: yes
+        - name: Install latest stable Flutter version with FVM
+          command: fvm install stable
+          become: yes
+          become_user: "{{ username }}"
 
-        - name: Add Flutter to PATH
+        - name: Set global Flutter version
+          command: fvm global stable
+          become: yes
+          become_user: "{{ username }}"
+
+        - name: Add FVM-managed Flutter to PATH
           lineinfile:
             path: "{{ user_home }}/.zshrc"
-            line: 'export PATH="$PATH:{{ user_home }}/flutter/bin"'
+            line: 'export PATH="$PATH":"$HOME/fvm/default/bin"'
+          become: yes
+          become_user: "{{ username }}"
 
-        - name: Run Flutter doctor
-          command: "{{ user_home }}/flutter/bin/flutter doctor"
+      when: fvm_check.rc != 0
 
-        - name: Accept Android licenses
-          shell: yes | {{ user_home }}/flutter/bin/flutter doctor --android-licenses
-      when: not flutter_check.stat.exists
+    - name: Run Flutter doctor
+      command: fvm flutter doctor
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Accept Android licenses
+      shell: yes | fvm flutter doctor --android-licenses
       become: yes
       become_user: "{{ username }}"
 
