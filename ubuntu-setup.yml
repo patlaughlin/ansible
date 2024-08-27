@@ -1,0 +1,216 @@
+---
+- name: Setup Ubuntu system and deploy dotfiles
+  hosts: localhost
+  become: yes
+  vars:
+    dotfiles_repo: "https://github.com/patlaughlin/dotfiles.git"
+    username: "plaugh"  # Replace with your actual username if different
+    user_home: "/home/{{ username }}"
+    dotfiles_local_path: "{{ user_home }}/dotfiles"
+    font_url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.2/CascadiaCode.zip"
+    font_filename: "CascadiaCode.zip"
+    stow_folders:
+      - i3
+      - kitty
+      - lvim
+      - picom
+      - polybar
+      - rofi
+      - tmux
+      - xmodmap
+      - zsh
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - git
+          - kitty
+          - tmux
+          - zsh
+          - i3
+          - polybar
+          - rofi
+          - nvtop
+          - mesa-utils
+          - stow
+          - curl
+          - build-essential
+          - procps
+          - file
+        state: present
+
+    - name: Install Neovim via Snap
+      community.general.snap:
+        name: nvim
+        classic: yes
+
+    - name: Set Zsh as default shell
+      user:
+        name: "{{ username }}"
+        shell: /bin/zsh
+
+    - name: Remove incorrect dotfiles directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/root/dotfiles"
+        - "/home/root/dotfiles"
+
+    - name: Remove existing dotfiles directory if it exists
+      file:
+        path: "{{ dotfiles_local_path }}"
+        state: absent
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Clone dotfiles repository
+      git:
+        repo: "{{ dotfiles_repo }}"
+        dest: "{{ dotfiles_local_path }}"
+        version: main
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Install Oh My Zsh
+      shell: sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+      args:
+        creates: "{{ user_home }}/.oh-my-zsh"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Clone zsh-autosuggestions plugin
+      git:
+        repo: https://github.com/zsh-users/zsh-autosuggestions
+        dest: "{{ user_home }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Install Homebrew
+      shell: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        creates: "/home/linuxbrew/.linuxbrew/bin/brew"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Add Homebrew to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+        create: yes
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Create temporary directory for font download
+      file:
+        path: "{{ user_home }}/temp_font"
+        state: directory
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Download Caskaydia Cove Nerd Font
+      get_url:
+        url: "{{ font_url }}"
+        dest: "{{ user_home }}/temp_font/{{ font_filename }}"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Unzip Caskaydia Cove Nerd Font
+      unarchive:
+        src: "{{ user_home }}/temp_font/{{ font_filename }}"
+        dest: "{{ user_home }}/temp_font/"
+        remote_src: yes
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Create .fonts directory
+      file:
+        path: "{{ user_home }}/.fonts"
+        state: directory
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Move font files to .fonts directory
+      shell: mv {{ user_home }}/temp_font/*.ttf {{ user_home }}/.fonts/
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Update font cache
+      shell: fc-cache -fv
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Clean up temporary font directory
+      file:
+        path: "{{ user_home }}/temp_font"
+        state: absent
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Backup existing .zshrc
+      command: mv {{ user_home }}/.zshrc {{ user_home }}/.zshrc.backup
+      args:
+        creates: "{{ user_home }}/.zshrc.backup"
+      become: yes
+      become_user: "{{ username }}"
+      ignore_errors: yes
+
+    - name: Remove existing .zshrc
+      file:
+        path: "{{ user_home }}/.zshrc"
+        state: absent
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Stow dotfiles
+      command: stow {{ item }}
+      args:
+        chdir: "{{ dotfiles_local_path }}"
+      loop: "{{ stow_folders }}"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Ensure Homebrew PATH is in .zshrc
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+        create: yes
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Copy redshift.conf
+      copy:
+        src: "{{ dotfiles_local_path }}/redshift.conf"
+        dest: "{{ user_home }}/.config/redshift.conf"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Create backgrounds directory
+      file:
+        path: "{{ user_home }}/backgrounds"
+        state: directory
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Copy backgrounds
+      copy:
+        src: "{{ dotfiles_local_path }}/backgrounds/"
+        dest: "{{ user_home }}/backgrounds/"
+      become: yes
+      become_user: "{{ username }}"
+
+    - name: Git personal setup email
+      git_config:
+        name: user.email
+        scope: global
+        value: "prlaugh@gmail.com"
+      become: yes
+      become_user: "{{ username }}"
+      tags:
+        - git-personal
