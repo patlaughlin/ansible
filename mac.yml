@@ -1,0 +1,320 @@
+---
+# MacOS System Setup Playbook
+#
+# Prerequisites:
+# 1. Ansible installed on the local machine
+#    To install: brew install ansible
+#
+# 2. community.general collection for Ansible
+#    To install: ansible-galaxy collection install community.general
+#
+# 3. Admin privileges for the user running the playbook
+#
+# 4. Replace the 'username' variable with your actual username
+#
+# To run this playbook:
+# ansible-playbook macbook_setup.yml
+#
+# Note: This playbook will make significant changes to your system.
+# It's recommended to review the tasks and variables before running.
+#
+#
+- name: Setup MacBook system and deploy dotfiles
+  hosts: localhost
+  become: no
+  vars:
+    dotfiles_repo: "https://github.com/patlaughlin/dotfiles.git"
+    username: "{{ lookup('env', 'USER') }}"  # Default to current user
+    user_home: "/Users/{{ username }}"
+    dotfiles_local_path: "{{ user_home }}/dotfiles"
+    font_url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/CascadiaCode.zip"
+    font_filename: "CascadiaCode.zip"
+    flutter_version: "3.24.0"
+    stow_folders:
+      - ghostty
+      - lvim
+      - tmux
+      - zsh
+    # Variable to determine if running in test mode (Docker)
+    is_test_env: "{{ lookup('env', 'ANSIBLE_TEST_MODE') | default('false') }}"
+
+  tasks:
+    - name: Get OS information
+      ansible.builtin.setup:
+        filter: ansible_distribution
+      register: os_info
+
+    - name: Set fact for actual macOS detection
+      set_fact:
+        is_macos: "{{ os_info.ansible_facts.ansible_distribution == 'MacOSX' }}"
+
+    - name: Display environment information
+      debug:
+        msg: "Running on {{ os_info.ansible_facts.ansible_distribution }}. Test mode: {{ is_test_env }}"
+
+    - name: Check if Homebrew is installed
+      stat:
+        path: "/usr/local/bin/brew"
+      register: homebrew_check
+
+    - name: Install Homebrew
+      shell: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      when: not homebrew_check.stat.exists and is_macos | bool
+
+    - name: Install required packages with Homebrew
+      community.general.homebrew:
+        name:
+          - git
+          - tmux
+          - zsh
+          - stow
+          - curl
+          - make
+          - python3
+          - node
+          - ripgrep
+          - neovim
+        state: present
+      when: is_macos | bool
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Install packages with apt for testing
+      apt:
+        name:
+          - git
+          - tmux
+          - zsh
+          - stow
+          - curl
+          - make
+          - python3
+          - ripgrep
+          - neovim
+        state: present
+      become: yes
+      when: not is_macos | bool and is_test_env | bool
+      ignore_errors: yes
+
+    - name: Check if lazygit is installed
+      command: which lazygit
+      register: lazygit_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Install lazygit with Homebrew
+      community.general.homebrew:
+        name: lazygit
+        state: present
+      when: lazygit_check.rc != 0 and is_macos | bool
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Check if dotfiles directory exists
+      stat:
+        path: "{{ dotfiles_local_path }}"
+      register: dotfiles_dir
+
+    - name: Remove existing dotfiles directory if it exists
+      file:
+        path: "{{ dotfiles_local_path }}"
+        state: absent
+      when: dotfiles_dir.stat.exists
+
+    - name: Clone dotfiles repository
+      git:
+        repo: "{{ dotfiles_repo }}"
+        dest: "{{ dotfiles_local_path }}"
+        version: main
+        update: no  # Don't update if already cloned
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Check if Oh My Zsh is installed
+      stat:
+        path: "{{ user_home }}/.oh-my-zsh"
+      register: oh_my_zsh
+
+    - name: Install Oh My Zsh
+      shell: sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+      when: not oh_my_zsh.stat.exists
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Clone zsh-autosuggestions plugin
+      git:
+        repo: https://github.com/zsh-users/zsh-autosuggestions
+        dest: "{{ user_home }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        update: no  # Don't update if already cloned
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Check if Caskaydia Cove Nerd Font is installed
+      find:
+        paths: "{{ user_home }}/Library/Fonts"
+        patterns: "CaskaydiaCove*.ttf"
+      register: font_check
+
+    - name: Download and install Caskaydia Cove Nerd Font
+      block:
+        - name: Create temporary directory for font download
+          file:
+            path: "{{ user_home }}/temp_font"
+            state: directory
+
+        - name: Download Caskaydia Cove Nerd Font
+          get_url:
+            url: "{{ font_url }}"
+            dest: "{{ user_home }}/temp_font/{{ font_filename }}"
+
+        - name: Unzip Caskaydia Cove Nerd Font
+          unarchive:
+            src: "{{ user_home }}/temp_font/{{ font_filename }}"
+            dest: "{{ user_home }}/temp_font/"
+            remote_src: yes
+
+        - name: Create Fonts directory if it doesn't exist
+          file:
+            path: "{{ user_home }}/Library/Fonts"
+            state: directory
+
+        - name: Move font files to Fonts directory
+          shell: mv {{ user_home }}/temp_font/*.ttf {{ user_home }}/Library/Fonts/
+
+        - name: Clean up temporary font directory
+          file:
+            path: "{{ user_home }}/temp_font"
+            state: absent
+      when: font_check.matched == 0
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Backup existing .zshrc
+      copy:
+        src: "{{ user_home }}/.zshrc"
+        dest: "{{ user_home }}/.zshrc.backup"
+        remote_src: yes
+      when: ansible_check_mode
+
+    - name: Remove existing .zshrc
+      file:
+        path: "{{ user_home }}/.zshrc"
+        state: absent
+      when: ansible_check_mode
+
+    - name: Stow dotfiles
+      command: stow {{ item }}
+      args:
+        chdir: "{{ dotfiles_local_path }}"
+      loop: "{{ stow_folders }}"
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Check if LunarVim is installed
+      stat:
+        path: "{{ user_home }}/.local/bin/lvim"
+      register: lunarvim_check
+
+    - name: Install LunarVim
+      block:
+        - name: Download LunarVim installation script
+          get_url:
+            url: https://raw.githubusercontent.com/LunarVim/LunarVim/release-1.4/neovim-0.9/utils/installer/install.sh
+            dest: "{{ user_home }}/lvim_install.sh"
+            mode: '0755'
+
+        - name: Run LunarVim installation script
+          shell: LV_BRANCH='release-1.4/neovim-0.9' bash {{ user_home }}/lvim_install.sh
+
+        - name: Remove LunarVim installation script
+          file:
+            path: "{{ user_home }}/lvim_install.sh"
+            state: absent
+      when: not lunarvim_check.stat.exists
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Add LunarVim to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export PATH="$HOME/.local/bin:$PATH"'
+        create: yes
+
+    - name: Install Android Studio via Homebrew Cask
+      community.general.homebrew_cask:
+        name: android-studio
+        state: present
+      when: is_macos | bool
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Set ANDROID_HOME environment variable
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export ANDROID_HOME="{{ user_home }}/Library/Android/sdk"'
+        create: yes
+
+    - name: Add Android SDK tools to PATH
+      lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        line: 'export PATH="$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/tools/bin:$ANDROID_HOME/platform-tools"'
+        create: yes
+
+    - name: Check if FVM is installed
+      command: which fvm
+      register: fvm_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Install FVM
+      block:
+        - name: Add FVM Homebrew tap
+          homebrew_tap:
+            name: leoafarias/fvm
+          when: is_macos | bool
+
+        - name: Install FVM via Homebrew
+          homebrew:
+            name: fvm
+            state: present
+          when: is_macos | bool
+
+        - name: Install latest stable Flutter version with FVM
+          command: fvm install stable
+          when: is_macos | bool or not is_test_env | bool
+
+        - name: Set global Flutter version
+          command: fvm global stable
+          when: is_macos | bool or not is_test_env | bool
+
+        - name: Add FVM-managed Flutter to PATH
+          lineinfile:
+            path: "{{ user_home }}/.zshrc"
+            line: 'export PATH="$PATH":"$HOME/fvm/default/bin"'
+            create: yes
+
+      when: fvm_check.rc != 0
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Run Flutter doctor
+      command: fvm flutter doctor
+      when: is_macos | bool or not is_test_env | bool
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Create backgrounds directory
+      file:
+        path: "{{ user_home }}/backgrounds"
+        state: directory
+
+    - name: Copy backgrounds
+      copy:
+        src: "{{ dotfiles_local_path }}/backgrounds/"
+        dest: "{{ user_home }}/backgrounds/"
+      ignore_errors: "{{ is_test_env | bool }}"
+
+    - name: Git personal setup email
+      git_config:
+        name: user.email
+        scope: global
+        value: "prlaugh@gmail.com"
+      tags:
+        - git-personal
+
+    - name: Install Ghostty via Homebrew Cask
+      community.general.homebrew_cask:
+        name: ghostty
+        state: present
+      when: is_macos | bool
+      ignore_errors: "{{ is_test_env | bool }}"
